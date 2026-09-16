@@ -14,6 +14,7 @@ import android.view.View
 import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.coordinatorlayout.widget.CoordinatorLayout
@@ -34,7 +35,6 @@ import com.squareup.picasso.Picasso
 class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
-        private const val CREATE_REQUEST_CODE = 111
     }
 
     private lateinit var clRoot: CoordinatorLayout;
@@ -48,6 +48,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var memoryGame: MemoryGame;
     private lateinit var adapter: MemoryBoardAdapter;
     private var boardSize: BoardSize = BoardSize.MEDIUM;
+
+    private val createGameLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode != Activity.RESULT_OK) {
+                return@registerForActivityResult
+            }
+
+            val customGameName = result.data?.getStringExtra(EXTRA_GAME_NAME)
+
+            if (customGameName == null) {
+                Log.e(TAG, "Got null custom game from CreateActivity")
+                return@registerForActivityResult
+            }
+
+            downloadGame(customGameName)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState);
@@ -94,17 +110,6 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item);
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == CREATE_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
-            val customGameName = data?.getStringExtra(EXTRA_GAME_NAME)
-            if (customGameName == null) {
-                Log.e(TAG, "Got null custom game from CreateActivity")
-                return
-            }
-            downloadGame(customGameName)
-        }
-        super.onActivityResult(requestCode, resultCode, data)
-    }
 
     private fun showDownloadDialog() {
         val boardDownloadView = LayoutInflater.from(this).inflate(R.layout.dialog_download_board, null)
@@ -141,7 +146,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCreationDialog() {
-        val boardSizeView = LayoutInflater.from(this,).inflate(R.layout.dialog_board_size, null);
+        val boardSizeView = LayoutInflater.from(this).inflate(R.layout.dialog_board_size, null);
         val radioGroupSize = boardSizeView.findViewById<RadioGroup>(R.id.radioGroup);
 
         showAlertDialog("Create your own memory board:", boardSizeView, View.OnClickListener {
@@ -155,12 +160,12 @@ class MainActivity : AppCompatActivity() {
             // Navigate user to a new activity
             val intent = Intent(this, CreateActivity::class.java);
             intent.putExtra(EXTRA_BOARD_SIZE, desiredBoardSize);
-            startActivityForResult(intent, CREATE_REQUEST_CODE);
+            createGameLauncher.launch(intent)
         });
     }
 
     private fun showNewSizeDialog() {
-        val boardSizeView = LayoutInflater.from(this,).inflate(R.layout.dialog_board_size, null);
+        val boardSizeView = LayoutInflater.from(this).inflate(R.layout.dialog_board_size, null);
         val radioGroupSize = boardSizeView.findViewById<RadioGroup>(R.id.radioGroup);
         when (boardSize) {
             BoardSize.EASY -> radioGroupSize.check(R.id.rbEasy)

@@ -5,12 +5,12 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.provider.MediaStore
 import android.text.Editable
 import android.text.InputFilter
 import android.text.TextWatcher
@@ -21,6 +21,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.IntentCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.firebase.Firebase
@@ -34,7 +36,6 @@ class CreateActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "Create activity";
-        private const val PICK_PHOTO_CODE = 248;
         private const val READ_EXTERNAL_PHOTOS_CODE = 222;
         private const val READ_PHOTOS_PERMISSION = android.Manifest.permission.READ_EXTERNAL_STORAGE
         private const val MIN_GAME_NAME_LENGTH = 3
@@ -53,6 +54,47 @@ class CreateActivity : AppCompatActivity() {
     private val storage = Firebase.storage
     private val db = Firebase.firestore
 
+    private val photoPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val data = result.data
+
+            if (result.resultCode != Activity.RESULT_OK || data == null) {
+                Log.w(
+                    TAG,
+                    "Did not get data back from the launched activity, user likely cancelled selection flow"
+                )
+                return@registerForActivityResult
+            }
+
+            val selectedUri = data.data
+            val clipData = data.clipData
+
+            if (clipData != null) {
+                Log.i(TAG, "clipData numImages ${clipData.itemCount}: $clipData")
+
+                for (i in 0 until clipData.itemCount) {
+                    val clipItem = clipData.getItemAt(i)
+
+                    if (chosenImageUris.size < numImagesRequired) {
+                        chosenImageUris.add(clipItem.uri)
+                    }
+                }
+            } else if (selectedUri != null) {
+                Log.i(TAG, "data: $selectedUri")
+
+                if (chosenImageUris.size < numImagesRequired) {
+                    chosenImageUris.add(selectedUri)
+                }
+            }
+
+            adapter.notifyDataSetChanged()
+
+            supportActionBar?.title =
+                "Choose pics (${chosenImageUris.size} / $numImagesRequired)"
+
+            btnSave.isEnabled = shouldEnableSaveButton()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_create);
@@ -63,7 +105,12 @@ class CreateActivity : AppCompatActivity() {
         pbUploading = findViewById(R.id.pbUploading);
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true);
-        boardSize = intent.getSerializableExtra(EXTRA_BOARD_SIZE) as BoardSize;
+        boardSize = IntentCompat.getSerializableExtra(
+            intent,
+            EXTRA_BOARD_SIZE,
+            BoardSize::class.java
+        ) ?: BoardSize.EASY
+
         numImagesRequired = boardSize.getNumPairs();
         supportActionBar?.title = "Choose pics (0 / $numImagesRequired)";
 
@@ -101,7 +148,7 @@ class CreateActivity : AppCompatActivity() {
             requestCode: Int,
             permissions: Array<out String>,
             grantResults: IntArray) {
-        if (requestCode === READ_EXTERNAL_PHOTOS_CODE) {
+        if (requestCode == READ_EXTERNAL_PHOTOS_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 launchIntentForPhotos();
             } else {
@@ -119,34 +166,6 @@ class CreateActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode != PICK_PHOTO_CODE || resultCode != Activity.RESULT_OK || data == null) {
-            Log.w(TAG, "Did not get data back from the launched activity, user likely cancelled selection flow")
-            return;
-        }
-        val selectedUri = data.data;
-        val clipData = data.clipData;
-
-        if (clipData != null) {
-            Log.i(TAG, "clipData numImages ${clipData.itemCount}: $clipData");
-            for (i in 0 until clipData.itemCount) {
-                val clipItem = clipData.getItemAt(i);
-                if (chosenImageUris.size < numImagesRequired) {
-                    chosenImageUris.add(clipItem.uri);
-                }
-            }
-        } else if (selectedUri != null) {
-            Log.i(TAG, "data: $selectedUri");
-            chosenImageUris.add(selectedUri);
-        }
-        adapter.notifyDataSetChanged();
-        supportActionBar?.title = "Choose pics (${chosenImageUris.size} / $numImagesRequired)";
-
-        btnSave.isEnabled = shouldEnableSaveButton();
-    }
-
     private fun shouldEnableSaveButton(): Boolean {
         // Check if we should enable the save button
         if (chosenImageUris.size != numImagesRequired) {
@@ -159,10 +178,13 @@ class CreateActivity : AppCompatActivity() {
     }
 
     private fun launchIntentForPhotos() {
-        val intent = Intent(Intent.ACTION_PICK);
-        intent.type = "image/*";
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        startActivityForResult(Intent.createChooser(intent, "Choose Pictures"), PICK_PHOTO_CODE);
+        val intent = Intent(Intent.ACTION_PICK)
+        intent.type = "image/*"
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+
+        photoPickerLauncher.launch(
+            Intent.createChooser(intent, "Choose Pictures")
+        )
     }
 
     private fun saveDataToFirebase() {
@@ -254,14 +276,26 @@ class CreateActivity : AppCompatActivity() {
             val source = ImageDecoder.createSource(contentResolver, photoUri)
             ImageDecoder.decodeBitmap(source)
         } else {
-            MediaStore.Images.Media.getBitmap(contentResolver, photoUri)
+            contentResolver.openInputStream(photoUri)?.use { inputStream ->
+                BitmapFactory.decodeStream(inputStream)
+            } ?: throw IllegalArgumentException("Unable to decode image: $photoUri")
         }
-        Log.i(TAG, "Original width ${originalBitmap.width} and height ${originalBitmap.height}")
+
+        Log.i(
+            TAG,
+            "Original width ${originalBitmap.width} and height ${originalBitmap.height}"
+        )
+
         val scaledBitmap = BitmapScaler.scaleToFitHeight(originalBitmap, 250)
-        Log.i(TAG, "Scaled width ${scaledBitmap.width} and height ${scaledBitmap.height}")
+
+        Log.i(
+            TAG,
+            "Scaled width ${scaledBitmap.width} and height ${scaledBitmap.height}"
+        )
 
         val byteOutputStream = ByteArrayOutputStream()
         scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 60, byteOutputStream)
+
         return byteOutputStream.toByteArray()
     }
 
