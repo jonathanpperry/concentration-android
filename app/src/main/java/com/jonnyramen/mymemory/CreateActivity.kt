@@ -23,9 +23,9 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.firebase.firestore.ktx.firestore
-import com.google.firebase.ktx.Firebase
-import com.google.firebase.storage.ktx.storage
+import com.google.firebase.Firebase
+import com.google.firebase.firestore.firestore
+import com.google.firebase.storage.storage
 import com.jonnyramen.mymemory.models.BoardSize
 import com.jonnyramen.mymemory.utils.*
 import java.io.ByteArrayOutputStream
